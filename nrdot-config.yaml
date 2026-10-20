@@ -1,0 +1,85 @@
+# NRDOT collector config: host metrics/logs plus MySQL (DB360) from the local container.
+# Installed to /etc/nrdot-collector/config.yaml. Secrets come from the service
+# environment file, not from this file.
+extensions:
+  health_check:
+
+receivers:
+  host_metrics:
+    collection_interval: 60s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      load:
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      paging:
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+      disk:
+      network:
+      processes:
+
+  file_log:
+    include:
+      - /var/log/syslog
+      - /var/log/auth.log
+
+  nrmysql:
+    endpoint: localhost:3306
+    username: newrelic
+    password: ${env:NR_MONITOR_PASSWORD}
+    collection_interval: 10s
+    tls:
+      insecure: true
+    events:
+      db.server.top_query:
+        enabled: true
+      db.server.query_sample:
+        enabled: true
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: ${env:NEW_RELIC_MEMORY_LIMIT_MIB:-200}
+  resource_detection:
+    detectors: ["system"]
+    system:
+      hostname_sources: ["os"]
+      resource_attributes:
+        host.id:
+          enabled: true
+  cumulative_to_delta:
+  batch:
+
+exporters:
+  otlphttp:
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT:-https://otlp.nr-data.net}
+    headers:
+      api-key: ${env:NEW_RELIC_LICENSE_KEY}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics/host:
+      receivers: [host_metrics]
+      processors: [memory_limiter, resource_detection, cumulative_to_delta, batch]
+      exporters: [otlphttp]
+    logs/host:
+      receivers: [file_log]
+      processors: [memory_limiter, resource_detection, batch]
+      exporters: [otlphttp]
+    metrics/mysql:
+      receivers: [nrmysql]
+      processors: [memory_limiter, resource_detection, cumulative_to_delta, batch]
+      exporters: [otlphttp]
+    logs/mysql:
+      receivers: [nrmysql]
+      processors: [memory_limiter, resource_detection, batch]
+      exporters: [otlphttp]
