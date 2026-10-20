@@ -37,7 +37,6 @@ sudo docker exec -i db360-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" <<SQL
 CREATE USER IF NOT EXISTS 'newrelic'@'%' IDENTIFIED BY '${NR_MONITOR_PASSWORD}' WITH MAX_USER_CONNECTIONS 5;
 GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'newrelic'@'%';
 GRANT SELECT ON performance_schema.* TO 'newrelic'@'%';
-GRANT SELECT ON information_schema.* TO 'newrelic'@'%';
 FLUSH PRIVILEGES;
 SQL
 
