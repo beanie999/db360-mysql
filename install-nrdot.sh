@@ -7,7 +7,7 @@ set -euo pipefail
 : "${NEW_RELIC_LICENSE_KEY:?set NEW_RELIC_LICENSE_KEY}"
 : "${NR_MONITOR_PASSWORD:?set NR_MONITOR_PASSWORD}"
 
-VERSION=2.7.2
+VERSION=2.7.1
 ARCH=$(dpkg --print-architecture)   # amd64 or arm64
 DEB="nrdot-collector_${VERSION}_linux_${ARCH}.deb"
 URL="https://github.com/newrelic/nrdot-collector-releases/releases/download/${VERSION}/${DEB}"
