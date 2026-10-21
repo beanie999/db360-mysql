@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Installs the NRDOT collector (host install) on Ubuntu and points it at New Relic (US).
-# Usage: NEW_RELIC_LICENSE_KEY=... NR_MONITOR_PASSWORD=... ./install-nrdot.sh
+# Usage: NEW_RELIC_LICENSE_KEY=... NR_MONITOR_PASSWORD=... PG_MONITOR_PASSWORD=... ./install-nrdot.sh
 # Run from the repo directory so nrdot-config.yaml is found.
 set -euo pipefail
 
 : "${NEW_RELIC_LICENSE_KEY:?set NEW_RELIC_LICENSE_KEY}"
 : "${NR_MONITOR_PASSWORD:?set NR_MONITOR_PASSWORD}"
+: "${PG_MONITOR_PASSWORD:?set PG_MONITOR_PASSWORD}"
 
 VERSION=2.7.1
 ARCH=$(dpkg --print-architecture)   # amd64 or arm64
@@ -23,14 +24,19 @@ sudo dpkg -i "$WORK/$DEB"
 sudo install -m 0644 "$HERE/nrdot-config.yaml" /etc/nrdot-collector/config.yaml
 
 # Secrets live in the systemd environment file, readable only by root.
-sudo tee -a /etc/nrdot-collector/nrdot-collector.conf >/dev/null <<EOF
-NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
-NR_MONITOR_PASSWORD=${NR_MONITOR_PASSWORD}
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net
-EOF
-sudo chmod 600 /etc/nrdot-collector/nrdot-collector.conf
+# Each key is replaced if already present, so re-running does not duplicate lines.
+ENV_FILE=/etc/nrdot-collector/nrdot-collector.conf
+set_env() {
+  sudo sed -i "/^$1=/d" "$ENV_FILE"
+  echo "$1=$2" | sudo tee -a "$ENV_FILE" >/dev/null
+}
+set_env NEW_RELIC_LICENSE_KEY "$NEW_RELIC_LICENSE_KEY"
+set_env NR_MONITOR_PASSWORD "$NR_MONITOR_PASSWORD"
+set_env PG_MONITOR_PASSWORD "$PG_MONITOR_PASSWORD"
+set_env OTEL_EXPORTER_OTLP_ENDPOINT https://otlp.nr-data.net
+sudo chmod 600 "$ENV_FILE"
 
-# Let the collector read /var/log/syslog and auth.log.
+# Let the collector read /var/log/syslog, auth.log and the PostgreSQL log.
 sudo usermod -aG adm nrdot-collector
 
 sudo systemctl enable nrdot-collector

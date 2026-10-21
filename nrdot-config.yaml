@@ -30,6 +30,7 @@ receivers:
     include:
       - /var/log/syslog
       - /var/log/auth.log
+      - /var/log/postgresql/postgresql-*-main.log
 
   nrmysql:
     endpoint: localhost:3306
@@ -45,6 +46,23 @@ receivers:
         enabled: true
       db.server.query_sample:
         enabled: true
+
+  nrpostgresql:
+    endpoint: localhost:5432
+    username: newrelic
+    password: ${env:PG_MONITOR_PASSWORD}
+    # pg_stat_statements and the otel.explain_statement function live in db360.
+    connect_database: db360
+    collection_interval: 10s
+    tls:
+      insecure: true
+    events:
+      db.server.top_query:
+        enabled: true
+      db.server.query_sample:
+        enabled: true
+    top_query_collection:
+      collection_interval: 60s
 
 processors:
   memory_limiter:
@@ -83,5 +101,13 @@ service:
       exporters: [otlphttp]
     logs/mysql:
       receivers: [nrmysql]
+      processors: [memory_limiter, resource_detection, batch]
+      exporters: [otlphttp]
+    metrics/postgres:
+      receivers: [nrpostgresql]
+      processors: [memory_limiter, resource_detection, cumulative_to_delta, batch]
+      exporters: [otlphttp]
+    logs/postgres:
+      receivers: [nrpostgresql]
       processors: [memory_limiter, resource_detection, batch]
       exporters: [otlphttp]

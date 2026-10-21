@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the demo app with the New Relic Java agent attached (US region by default).
-# Usage: DB_PASSWORD=... NEW_RELIC_LICENSE_KEY=... ./run-demo-app.sh
+# Usage: DB_PASSWORD=... PG_PASSWORD=... NEW_RELIC_LICENSE_KEY=... ./run-demo-app.sh
+# PG_PASSWORD (the PostgreSQL demo role) is optional; without it the /login and /pg endpoints return 503.
 # Run ./install-nr-agent.sh first and build the app with: (cd demo-app && mvn -q package)
 set -euo pipefail
 
