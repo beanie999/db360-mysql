@@ -28,8 +28,10 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Small demo web app: each URL runs one or more SQL queries against the db360 demo database.
@@ -114,6 +116,10 @@ public class DemoApp {
         route(server, "/order", p -> placeOrder(
             intParam(p, "customer", 1 + ThreadLocalRandom.current().nextInt(2000))));
 
+        // Row lock contention: one session holds a lock on a product row while this request tries to update it.
+        route(server, "/lock", p -> lockContention(
+            intParam(p, "id", 1), Math.min(15, intParam(p, "secs", 5))));
+
         // Invalid SQL, to produce an error.
         route(server, "/error", p -> query("SELECT * FROM table_that_does_not_exist"));
 
@@ -164,6 +170,45 @@ public class DemoApp {
                 throw e;
             }
         }
+    }
+
+    /**
+     * Starts a background session that locks one product row for {@code secs} seconds, then
+     * updates the same row from this request, which blocks until the lock is released.
+     */
+    private static String lockContention(int productId, int secs) throws Exception {
+        CountDownLatch locked = new CountDownLatch(1);
+        Thread holder = new Thread(() -> {
+            try (Connection c = ds.getConnection()) {
+                c.setAutoCommit(false);
+                try (PreparedStatement ps = c.prepareStatement("SELECT id FROM products WHERE id = ? FOR UPDATE")) {
+                    ps.setInt(1, productId);
+                    ps.executeQuery().close();
+                }
+                log.info("Holding row lock on product {} for {} s", productId, secs);
+                locked.countDown();
+                Thread.sleep(secs * 1000L);
+                c.rollback();
+                log.info("Released row lock on product {}", productId);
+            } catch (Exception e) {
+                log.error("Lock holder for product {} failed", productId, e);
+            } finally {
+                locked.countDown();
+            }
+        }, "lock-holder");
+        holder.setDaemon(true);
+        holder.start();
+        locked.await(5, TimeUnit.SECONDS);
+
+        long start = System.nanoTime();
+        try (Connection c = ds.getConnection();
+             PreparedStatement ps = c.prepareStatement("UPDATE products SET price = price WHERE id = ?")) {
+            ps.setInt(1, productId);
+            ps.executeUpdate();
+        }
+        long ms = (System.nanoTime() - start) / 1_000_000;
+        log.warn("Update of product {} waited {} ms for a row lock", productId, ms);
+        return "{\"productId\":" + productId + ",\"waitedMs\":" + ms + "}";
     }
 
     /** Runs a query and returns the rows as a JSON array. */

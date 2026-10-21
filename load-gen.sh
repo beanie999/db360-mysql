@@ -13,6 +13,7 @@ PATHS=(
   /report/status
   /order /order
   /slow
+  /lock
   /error
 )
 
