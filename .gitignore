@@ -1,0 +1,28 @@
+# Maven build output
+target/
+dependency-reduced-pom.xml
+
+# New Relic Java agent (downloaded by install-nr-agent.sh) and its logs
+newrelic-agent/
+newrelic/
+newrelic_agent.log*
+
+# Application and tool logs
+*.log
+logs/
+
+# Certificates and keys (e.g. the corporate CA exported for the VM)
+*.pem
+*.crt
+*.key
+
+# Local secrets and env files; passwords and license keys belong in the environment, not in git
+.env
+.env.*
+*.secret
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
