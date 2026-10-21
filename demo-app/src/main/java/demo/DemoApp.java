@@ -1,9 +1,17 @@
 package demo;
 
+import com.newrelic.api.agent.ExtendedRequest;
+import com.newrelic.api.agent.HeaderType;
+import com.newrelic.api.agent.NewRelic;
+import com.newrelic.api.agent.Response;
+import com.newrelic.api.agent.Transaction;
+import com.newrelic.api.agent.TransactionNamePriority;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -15,7 +23,10 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
@@ -31,12 +42,15 @@ public class DemoApp {
         String handle(Map<String, String> params) throws Exception;
     }
 
+    private static final Logger log = LoggerFactory.getLogger(DemoApp.class);
+    private static final long SLOW_QUERY_MS = 500;
+
     private static HikariDataSource ds;
 
     public static void main(String[] args) throws IOException {
         String password = System.getenv("DB_PASSWORD");
         if (password == null || password.isEmpty()) {
-            System.err.println("DB_PASSWORD must be set");
+            log.error("DB_PASSWORD must be set");
             System.exit(1);
         }
         HikariConfig cfg = new HikariConfig();
@@ -104,7 +118,7 @@ public class DemoApp {
         route(server, "/error", p -> query("SELECT * FROM table_that_does_not_exist"));
 
         server.start();
-        System.out.println("Listening on port " + port);
+        log.info("Demo app started on port {}, database {}", port, cfg.getJdbcUrl());
     }
 
     private static String placeOrder(int customerId) throws SQLException {
@@ -142,8 +156,10 @@ public class DemoApp {
                     ps.executeUpdate();
                 }
                 c.commit();
+                log.info("Order {} placed for customer {} with {} items", orderId, customerId, items);
                 return "{\"orderId\":" + orderId + ",\"items\":" + items + "}";
             } catch (SQLException e) {
+                log.warn("Order for customer {} failed, rolling back", customerId, e);
                 c.rollback();
                 throw e;
             }
@@ -152,12 +168,20 @@ public class DemoApp {
 
     /** Runs a query and returns the rows as a JSON array. */
     private static String query(String sql, Object... args) throws SQLException {
+        long start = System.nanoTime();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             for (int i = 0; i < args.length; i++) {
                 ps.setObject(i + 1, args[i]);
             }
             try (ResultSet rs = ps.executeQuery()) {
-                return toJson(rs);
+                String json = toJson(rs);
+                long ms = (System.nanoTime() - start) / 1_000_000;
+                if (ms >= SLOW_QUERY_MS) {
+                    log.warn("Slow query took {} ms: {}", ms, sql);
+                } else {
+                    log.debug("Query took {} ms: {}", ms, sql);
+                }
+                return json;
             }
         }
     }
@@ -189,16 +213,75 @@ public class DemoApp {
 
     private static void route(HttpServer server, String path, Handler h) {
         server.createContext(path, ex -> {
+            long start = System.nanoTime();
+            Map<String, String> params = parseQuery(ex.getRequestURI().getRawQuery());
+            nameTransaction(ex, path, params);
             int status = 200;
             String body;
             try {
-                body = h.handle(parseQuery(ex.getRequestURI().getRawQuery()));
+                body = h.handle(params);
             } catch (Exception e) {
                 status = 500;
                 body = "{\"error\":\"" + escape(String.valueOf(e.getMessage())) + "\"}";
+                log.error("Request {} failed", path, e);
+                NewRelic.noticeError(e);
             }
+            NewRelic.getAgent().getTransaction().setWebResponse(new WebResponse(ex, status));
             send(ex, status, body);
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            log.info("{} {} -> {} in {} ms", ex.getRequestMethod(), ex.getRequestURI(), status, ms);
         });
+    }
+
+    /**
+     * The agent's built-in JDK HTTP server instrumentation reports every request as one
+     * non-web transaction. Mark it as a web transaction and name it after the URL path.
+     */
+    private static void nameTransaction(HttpExchange ex, String path, Map<String, String> params) {
+        Transaction txn = NewRelic.getAgent().getTransaction();
+        txn.convertToWebTransaction();
+        txn.setWebRequest(new WebRequest(ex, params));
+        txn.setTransactionName(TransactionNamePriority.CUSTOM_HIGH, true, "Url", path.substring(1));
+    }
+
+    private static class WebRequest extends ExtendedRequest {
+        private final HttpExchange ex;
+        private final Map<String, String> params;
+
+        WebRequest(HttpExchange ex, Map<String, String> params) {
+            this.ex = ex;
+            this.params = params;
+        }
+
+        @Override public String getMethod() { return ex.getRequestMethod(); }
+        @Override public String getRequestURI() { return ex.getRequestURI().getPath(); }
+        @Override public String getRemoteUser() { return null; }
+        @Override public Enumeration<String> getParameterNames() { return Collections.enumeration(params.keySet()); }
+        @Override public String[] getParameterValues(String name) {
+            String v = params.get(name);
+            return v == null ? null : new String[] {v};
+        }
+        @Override public Object getAttribute(String name) { return null; }
+        @Override public String getCookieValue(String name) { return null; }
+        @Override public HeaderType getHeaderType() { return HeaderType.HTTP; }
+        @Override public String getHeader(String name) { return ex.getRequestHeaders().getFirst(name); }
+        @Override public List<String> getHeaders(String name) { return ex.getRequestHeaders().get(name); }
+    }
+
+    private static class WebResponse implements Response {
+        private final HttpExchange ex;
+        private final int status;
+
+        WebResponse(HttpExchange ex, int status) {
+            this.ex = ex;
+            this.status = status;
+        }
+
+        @Override public int getStatus() { return status; }
+        @Override public String getStatusMessage() { return status == 200 ? "OK" : "Internal Server Error"; }
+        @Override public String getContentType() { return "application/json"; }
+        @Override public HeaderType getHeaderType() { return HeaderType.HTTP; }
+        @Override public void setHeader(String name, String value) { ex.getResponseHeaders().set(name, value); }
     }
 
     private static void send(HttpExchange ex, int status, String body) throws IOException {
