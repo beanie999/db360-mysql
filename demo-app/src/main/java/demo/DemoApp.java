@@ -102,6 +102,7 @@ public class DemoApp {
         // Primary key lookup, then the customer's recent orders (indexed on customer_id).
         route(server, "/customer", p -> {
             int id = intParam(p, "id", 1 + ThreadLocalRandom.current().nextInt(2000));
+            identify("customer-" + id);
             String customer = query(
                 "SELECT id, name, email, country FROM customers WHERE id = ?", id);
             String orders = query(
@@ -143,8 +144,11 @@ public class DemoApp {
         });
 
         // Write transaction: insert an order and items, then update the order total.
-        route(server, "/order", p -> placeOrder(
-            intParam(p, "customer", 1 + ThreadLocalRandom.current().nextInt(2000))));
+        route(server, "/order", p -> {
+            int customerId = intParam(p, "customer", 1 + ThreadLocalRandom.current().nextInt(2000));
+            identify("customer-" + customerId);
+            return placeOrder(customerId);
+        });
 
         // Row lock contention: one session holds a lock on a product row while this request tries to update it.
         route(server, "/lock", p -> lockContention(ds,
@@ -203,10 +207,16 @@ public class DemoApp {
         });
 
         // Invalid SQL, to produce an error.
-        route(server, "/pg/error", p -> query(pg(), "SELECT * FROM table_that_does_not_exist"));
+        route(server, "/pg/error", p -> {
+            identify("user" + (1 + ThreadLocalRandom.current().nextInt(1000)));
+            return query(pg(), "SELECT * FROM table_that_does_not_exist");
+        });
 
         // Invalid SQL, to produce an error.
-        route(server, "/error", p -> query("SELECT * FROM table_that_does_not_exist"));
+        route(server, "/error", p -> {
+            identify("customer-" + (1 + ThreadLocalRandom.current().nextInt(2000)));
+            return query("SELECT * FROM table_that_does_not_exist");
+        });
 
         server.start();
         log.info("Demo app started on port {}, database {}", port, cfg.getJdbcUrl());
@@ -296,6 +306,11 @@ public class DemoApp {
         return "{\"rowId\":" + rowId + ",\"waitedMs\":" + ms + "}";
     }
 
+    /** Sets the end user on the current transaction; it shows as enduser.id on traces and in the Errors inbox. */
+    private static void identify(String userId) {
+        NewRelic.setUserId(userId);
+    }
+
     private static DataSource pg() throws HttpError {
         if (pgDs == null) {
             throw new HttpError(503, "{\"error\":\"PostgreSQL is not configured (PG_PASSWORD not set)\"}");
@@ -313,6 +328,7 @@ public class DemoApp {
         String user = p.getOrDefault("user", "user" + n);
         String password = p.getOrDefault("password", rnd.nextInt(100) < 80 ? "Passw0rd-" + n : "wrong-password");
         String ip = p.getOrDefault("ip", p.getOrDefault("_remote", "unknown"));
+        identify(user);
         DataSource src = pg();
 
         String result;
