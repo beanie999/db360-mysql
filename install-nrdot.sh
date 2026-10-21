@@ -18,7 +18,13 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 curl -fsSL -o "$WORK/$DEB" "$URL"
 curl -fsSL -o "$WORK/$DEB.sum" "$URL.sum"
-# (cd "$WORK" && sha256sum -c "$DEB.sum" 2>/dev/null || { echo "Checksum check failed"; cat "$DEB.sum"; sha256sum "$DEB"; exit 1; })
+# The .sum file holds just the SHA-256 hash, so compare it directly.
+expected=$(tr -d '[:space:]' < "$WORK/$DEB.sum")
+actual=$(sha256sum "$WORK/$DEB" | cut -d' ' -f1)
+if [ "$expected" != "$actual" ]; then
+  echo "Checksum mismatch for $DEB: expected $expected, got $actual" >&2
+  exit 1
+fi
 sudo dpkg -i "$WORK/$DEB"
 
 sudo install -m 0644 "$HERE/nrdot-config.yaml" /etc/nrdot-collector/config.yaml

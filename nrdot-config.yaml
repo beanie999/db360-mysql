@@ -37,7 +37,7 @@ receivers:
     username: newrelic
     password: ${env:NR_MONITOR_PASSWORD}
     collection_interval: 10s
-    # Explain write statements through db360.explain_statement (see install-docker-mysql.sh).
+    # Explain write statements through db360.explain_statement (see install-mysql.sh).
     explain_mode: procedure
     tls:
       insecure: true

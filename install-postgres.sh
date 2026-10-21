@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs PostgreSQL on the host (no Docker), configures it for monitoring, and loads the demo data.
+# Installs PostgreSQL on the host, configures it for monitoring, and loads the demo data.
 # Usage: PG_DEMO_PASSWORD=... PG_MONITOR_PASSWORD=... ./install-postgres.sh
 # Safe to re-run: it resets the demo tables and passwords.
 set -euo pipefail
