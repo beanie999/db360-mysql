@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Calls random demo app URLs so there is query activity for DB360 to show.
-# Usage: ./load-gen.sh [seconds] [base-url]   (defaults: 300, http://localhost:8080)
+# Usage: ./load-gen.sh [requests] [base-url]   (defaults: 100, http://localhost:8080)
 set -u
 
-DURATION=${1:-300}
+TOTAL=${1:-100}
 BASE=${2:-http://localhost:8080}
 PATHS=(
   /customer /customer /customer /customer
@@ -21,14 +21,14 @@ PATHS=(
   /pg/slow /pg/lock /pg/dbauth-failure /pg/error
 )
 
-end=$((SECONDS + DURATION))
-while [ "$SECONDS" -lt "$end" ]; do
+for ((n = 1; n <= TOTAL; n++)); do
   p=${PATHS[RANDOM % ${#PATHS[@]}]}
   case "$p" in
     /login*) # give each attempt a source address
       [[ "$p" == *\?* ]] && sep='&' || sep='?'
       p="$p${sep}ip=10.1.$((RANDOM % 250)).$((RANDOM % 250))" ;;
   esac
-  curl -s -o /dev/null -w "%{http_code} $p\n" "$BASE$p"
+  status=$(curl -s -o /dev/null -w "%{http_code}" "$BASE$p")
+  echo "($n of $TOTAL) status $status $p"
   sleep 0.$((RANDOM % 5))
 done
