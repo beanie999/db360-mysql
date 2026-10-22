@@ -156,6 +156,9 @@ public class DemoApp {
             "UPDATE products SET price = price WHERE id = ?",
             intParam(p, "id", 1), Math.min(15, intParam(p, "secs", 5))));
 
+        // Account overview: login security from PostgreSQL plus order history from MySQL, in one request.
+        route(server, "/account", DemoApp::accountOverview);
+
         // --- PostgreSQL ---
 
         // Application login against the users table; every attempt is written to login_audit.
@@ -262,6 +265,65 @@ public class DemoApp {
             } catch (SQLException e) {
                 log.warn("Order for customer {} failed, rolling back", customerId, e);
                 c.rollback();
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Account overview for one user, reading both databases inside the same request (and so the same
+     * APM transaction and trace). The user's identity and login history come from PostgreSQL; their
+     * orders come from MySQL. The two are linked by the number in the name: user42 is customer 42.
+     * Each database is read in its own read-only transaction, both held open until the end; this is
+     * not a distributed (two-phase commit) transaction.
+     */
+    private static String accountOverview(Map<String, String> p) throws Exception {
+        String user = p.getOrDefault("user", "user" + (1 + ThreadLocalRandom.current().nextInt(1000)));
+        identify(user);
+        String digits = user.replaceAll("\\D", "");
+        if (digits.isEmpty() || digits.length() > 9) {
+            throw new HttpError(404, "{\"error\":\"unknown user\"}");
+        }
+        int customerId = Integer.parseInt(digits);
+        DataSource pgSrc = pg();
+
+        try (Connection pgConn = pgSrc.getConnection(); Connection myConn = ds.getConnection()) {
+            pgConn.setReadOnly(true);
+            pgConn.setAutoCommit(false);
+            myConn.setReadOnly(true);
+            myConn.setAutoCommit(false);
+            try {
+                // PostgreSQL: who the user is and how they have been logging in.
+                String account = query(pgConn,
+                    "SELECT id, username, failed_attempts, locked_until, last_login FROM users WHERE username = ?",
+                    user);
+                if ("[]".equals(account)) {
+                    throw new HttpError(404, "{\"error\":\"unknown user\"}");
+                }
+                String logins = query(pgConn,
+                    "SELECT count(*) FILTER (WHERE success) AS succeeded, "
+                        + "count(*) FILTER (WHERE NOT success) AS failed "
+                        + "FROM login_audit WHERE username = ? AND created_at > now() - interval '30 days'",
+                    user);
+
+                // MySQL: the matching customer and what they have ordered.
+                String customer = query(myConn,
+                    "SELECT id, name, email, country FROM customers WHERE id = ?", customerId);
+                String totals = query(myConn,
+                    "SELECT COUNT(*) AS orders, COALESCE(SUM(total), 0) AS lifetime_total, MAX(created_at) AS last_order "
+                        + "FROM orders WHERE customer_id = ? AND status <> 'CANCELLED'", customerId);
+                String recent = query(myConn,
+                    "SELECT id, status, total, created_at FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 5",
+                    customerId);
+
+                pgConn.commit();
+                myConn.commit();
+                return "{\"account\":" + account + ",\"logins30d\":" + logins
+                    + ",\"customer\":" + customer + ",\"orderTotals\":" + totals
+                    + ",\"recentOrders\":" + recent + "}";
+            } catch (SQLException e) {
+                pgConn.rollback();
+                myConn.rollback();
                 throw e;
             }
         }
@@ -414,8 +476,15 @@ public class DemoApp {
     }
 
     private static String query(DataSource src, String sql, Object... args) throws SQLException {
+        try (Connection c = src.getConnection()) {
+            return query(c, sql, args);
+        }
+    }
+
+    /** Runs a query on an existing connection, so several queries can share one transaction. */
+    private static String query(Connection c, String sql, Object... args) throws SQLException {
         long start = System.nanoTime();
-        try (Connection c = src.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             for (int i = 0; i < args.length; i++) {
                 ps.setObject(i + 1, args[i]);
             }

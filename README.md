@@ -226,6 +226,7 @@ FROM Transaction SELECT count(*) WHERE appName = 'db360-demo-app' AND error IS t
 | `/login?user=&password=` | PostgreSQL login against the `users` table; every attempt is recorded in `login_audit`. 200 success, 401 wrong password or unknown user, 423 account locked (five failures lock it for 2 minutes) |
 | `/login/history?user=` | The user's last 20 login attempts (scans the audit table) |
 | `/login/report` | Logins per hour and users with most failures in the last day |
+| `/account?user=` | Account overview that reads **both** databases in one request: login security from PostgreSQL (`users`, `login_audit`) and order history from MySQL (`customers`, `orders`). `user42` is matched to customer 42. Each database is read in its own read-only transaction, so it appears as one transaction and trace in APM with both databases in the breakdown |
 | `/pg/lock?id=&secs=` | PostgreSQL row-lock contention |
 | `/pg/slow?secs=` | PostgreSQL `pg_sleep()` |
 | `/pg/dbauth-failure` | A real PostgreSQL authentication failure (wrong password), visible in the PostgreSQL log |

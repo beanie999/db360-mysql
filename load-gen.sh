@@ -17,6 +17,7 @@ PATHS=(
   /error
   /login /login /login /login /login /login
   /login/history /login/report
+  /account /account /account
   "/login?user=user7&password=nope" "/login?user=admin&password=admin"
   /pg/slow /pg/lock /pg/dbauth-failure /pg/error
 )
